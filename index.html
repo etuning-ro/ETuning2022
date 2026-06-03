@@ -1169,6 +1169,10 @@
     color: #fff;
     height: 320vh;
     isolation: isolate;
+    /* Extra zoom applied to the film on portrait phones (see media query below). 1 = no zoom
+       (whole frame, object-fit:contain). Children inherit it; the value is read in JS too so the
+       watermark mask stays aligned. */
+    --film-zoom: 1;
   }
   .scroll-film .pin {
     position: sticky;
@@ -1188,6 +1192,8 @@
     height: 100%;
     object-fit: contain;
     object-position: center;
+    transform: scale(var(--film-zoom));
+    transform-origin: center center;
     z-index: 0;
     background: #000;
     filter: grayscale(1) contrast(1.06) brightness(0.96);
@@ -1200,10 +1206,13 @@
     inset: 0;
     width: 100%;
     height: 100%;
-    /* contain (not cover) keeps the whole frame visible on every aspect ratio — no crop /
-       "zoom" on portrait phones. The section bg is #000 so the letterbox is invisible. */
+    /* contain keeps the whole 16:9 frame visible (the #000 section hides the letterbox), then
+       --film-zoom scales it up a little on portrait phones so it fills more of the tall screen
+       (a gentle crop of the sides, never the extreme over-zoom of object-fit:cover). */
     object-fit: contain;
     object-position: center;
+    transform: scale(var(--film-zoom));
+    transform-origin: center center;
     z-index: 0;
     background: #000;
     filter: grayscale(1) contrast(1.06) brightness(0.96);
@@ -1223,6 +1232,12 @@
     transition: opacity 600ms var(--ease);
   }
   .scroll-film .film-wm-mask.ready { opacity: 1; }
+  /* Portrait phones: a little zoom so the film fills the tall screen instead of sitting as a thin
+     letterboxed strip. The center-anchored scale crops the far left/right edges slightly — which
+     also pushes the bottom-right "Veo" watermark mostly off-screen. */
+  @media (orientation: portrait) and (max-width: 820px) {
+    .scroll-film { --film-zoom: 1.45; }
+  }
 
   /* Loading state */
   .film-loader {
@@ -3108,14 +3123,19 @@
       if (!wm || !video.videoWidth || !video.videoHeight) return;
       const pin = video.parentElement;
       const PW = pin.clientWidth, PH = pin.clientHeight;
-      const scale = Math.min(PW / video.videoWidth, PH / video.videoHeight);
-      const bandW = video.videoWidth * scale, bandH = video.videoHeight * scale;
-      const left = (PW - bandW) / 2, top = (PH - bandH) / 2;
-      const mw = Math.max(70, bandW * 0.26), mh = Math.max(40, bandH * 0.20);
+      // object-fit:contain band, then the portrait-phone --film-zoom (center-anchored scale).
+      const zoom = parseFloat(getComputedStyle(video).getPropertyValue('--film-zoom')) || 1;
+      const fit = Math.min(PW / video.videoWidth, PH / video.videoHeight);
+      const bandW = video.videoWidth * fit * zoom, bandH = video.videoHeight * fit * zoom;
+      // Band corner (centred); when zoomed it can sit past the pin edge, so clamp to what's visible.
+      const right = Math.min(PW / 2 + bandW / 2, PW);
+      const bottom = Math.min(PH / 2 + bandH / 2, PH);
+      const mw = Math.min(Math.max(70, bandW * 0.26), right);
+      const mh = Math.min(Math.max(40, bandH * 0.20), bottom);
       wm.style.width  = mw + 'px';
       wm.style.height = mh + 'px';
-      wm.style.left   = (left + bandW - mw) + 'px';
-      wm.style.top    = (top + bandH - mh) + 'px';
+      wm.style.left   = (right - mw) + 'px';
+      wm.style.top    = (bottom - mh) + 'px';
     }
 
     // Direct file URL keeps HTTP range requests alive — iOS Safari needs them to seek/scrub.
