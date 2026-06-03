@@ -1220,25 +1220,11 @@
     transition: opacity 600ms var(--ease);
   }
   .scroll-film video.ready { opacity: 1; }
-  /* Discreet patch over the clip's bottom-right "Veo" watermark. Its size + position are set
-     in JS to track the real letterboxed video band (object-fit: contain), so it stays aligned
-     across every aspect ratio. The radial fade blends into the dark footage + #000 section. */
-  .scroll-film .film-wm-mask {
-    position: absolute;
-    z-index: 1;
-    pointer-events: none;
-    background: radial-gradient(ellipse 135% 135% at 100% 100%, #000 0%, #000 52%, rgba(0,0,0,0) 100%);
-    opacity: 0;
-    transition: opacity 600ms var(--ease);
-  }
-  .scroll-film .film-wm-mask.ready { opacity: 1; }
   /* Portrait phones: a little zoom so the film fills the tall screen instead of sitting as a thin
-     letterboxed strip. The center-anchored scale crops the far left/right edges, which pushes the
-     bottom-right "Veo" watermark off-screen — so the mask isn't needed here and is hidden
-     (otherwise it would sit as a dark box over the clean, zoomed-in footage). */
+     letterboxed strip. The center-anchored scale crops the far left/right edges slightly — never
+     the extreme over-zoom of object-fit:cover. */
   @media (orientation: portrait) and (max-width: 820px) {
     .scroll-film { --film-zoom: 1.45; }
-    .scroll-film .film-wm-mask { display: none; }
   }
 
   /* Loading state */
@@ -2137,7 +2123,6 @@
       poster=""
       aria-hidden="true">
     </video>
-    <span class="film-wm-mask" aria-hidden="true"></span>
 
     <div class="film-loader" id="filmLoader" aria-hidden="true">
       <div class="ring"></div>
@@ -3115,30 +3100,7 @@
     const stages  = document.querySelectorAll('#filmStages span');
     const loader  = document.getElementById('filmLoader');
     const pctEl   = document.getElementById('filmPct');
-    const wm      = section.querySelector('.film-wm-mask');
     if (!section || !video) return;
-
-    // Place the watermark mask over the real (letterboxed) video band. With object-fit:contain
-    // the painted frame is centred inside the pin, so we recompute its rect from the intrinsic
-    // video size whenever metadata loads or the viewport changes — keeps it aligned everywhere.
-    function positionMask() {
-      if (!wm || !video.videoWidth || !video.videoHeight) return;
-      const pin = video.parentElement;
-      const PW = pin.clientWidth, PH = pin.clientHeight;
-      // object-fit:contain band, then the portrait-phone --film-zoom (center-anchored scale).
-      const zoom = parseFloat(getComputedStyle(video).getPropertyValue('--film-zoom')) || 1;
-      const fit = Math.min(PW / video.videoWidth, PH / video.videoHeight);
-      const bandW = video.videoWidth * fit * zoom, bandH = video.videoHeight * fit * zoom;
-      // Band corner (centred); when zoomed it can sit past the pin edge, so clamp to what's visible.
-      const right = Math.min(PW / 2 + bandW / 2, PW);
-      const bottom = Math.min(PH / 2 + bandH / 2, PH);
-      const mw = Math.min(Math.max(70, bandW * 0.26), right);
-      const mh = Math.min(Math.max(40, bandH * 0.20), bottom);
-      wm.style.width  = mw + 'px';
-      wm.style.height = mh + 'px';
-      wm.style.left   = (right - mw) + 'px';
-      wm.style.top    = (bottom - mh) + 'px';
-    }
 
     // Direct file URL keeps HTTP range requests alive — iOS Safari needs them to seek/scrub.
     // (The previous build streamed the whole 3.6 MB clip into a blob: that downloads everything
@@ -3182,8 +3144,6 @@
         duration = video.duration;
         video.classList.add('ready');
         if (loader) { loader.classList.add('gone'); setTimeout(() => loader.remove(), 600); }
-        positionMask();
-        if (wm) wm.classList.add('ready');
         update(true);
       }
     };
@@ -3276,7 +3236,7 @@
       }
     };
     window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', () => { update(true); positionMask(); });
+    window.addEventListener('resize', () => update(true));
     update(false);
   })();
 
