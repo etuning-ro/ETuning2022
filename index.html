@@ -1233,10 +1233,12 @@
   }
   .scroll-film .film-wm-mask.ready { opacity: 1; }
   /* Portrait phones: a little zoom so the film fills the tall screen instead of sitting as a thin
-     letterboxed strip. The center-anchored scale crops the far left/right edges slightly — which
-     also pushes the bottom-right "Veo" watermark mostly off-screen. */
+     letterboxed strip. The center-anchored scale crops the far left/right edges, which pushes the
+     bottom-right "Veo" watermark off-screen — so the mask isn't needed here and is hidden
+     (otherwise it would sit as a dark box over the clean, zoomed-in footage). */
   @media (orientation: portrait) and (max-width: 820px) {
     .scroll-film { --film-zoom: 1.45; }
+    .scroll-film .film-wm-mask { display: none; }
   }
 
   /* Loading state */
