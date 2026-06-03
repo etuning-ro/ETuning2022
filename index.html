@@ -1186,7 +1186,7 @@
     inset: 0;
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    object-fit: contain;
     object-position: center;
     z-index: 0;
     background: #000;
@@ -1200,7 +1200,9 @@
     inset: 0;
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    /* contain (not cover) keeps the whole frame visible on every aspect ratio — no crop /
+       "zoom" on portrait phones. The section bg is #000 so the letterbox is invisible. */
+    object-fit: contain;
     object-position: center;
     z-index: 0;
     background: #000;
@@ -1209,6 +1211,18 @@
     transition: opacity 600ms var(--ease);
   }
   .scroll-film video.ready { opacity: 1; }
+  /* Discreet patch over the clip's bottom-right "Veo" watermark. Its size + position are set
+     in JS to track the real letterboxed video band (object-fit: contain), so it stays aligned
+     across every aspect ratio. The radial fade blends into the dark footage + #000 section. */
+  .scroll-film .film-wm-mask {
+    position: absolute;
+    z-index: 1;
+    pointer-events: none;
+    background: radial-gradient(ellipse 135% 135% at 100% 100%, #000 0%, #000 52%, rgba(0,0,0,0) 100%);
+    opacity: 0;
+    transition: opacity 600ms var(--ease);
+  }
+  .scroll-film .film-wm-mask.ready { opacity: 1; }
 
   /* Loading state */
   .film-loader {
@@ -2099,12 +2113,14 @@
       id="filmVideo"
       muted
       playsinline
+      webkit-playsinline="true"
       preload="auto"
       disableremoteplayback
       x-webkit-airplay="deny"
       poster=""
       aria-hidden="true">
     </video>
+    <span class="film-wm-mask" aria-hidden="true"></span>
 
     <div class="film-loader" id="filmLoader" aria-hidden="true">
       <div class="ring"></div>
@@ -3082,39 +3098,61 @@
     const stages  = document.querySelectorAll('#filmStages span');
     const loader  = document.getElementById('filmLoader');
     const pctEl   = document.getElementById('filmPct');
+    const wm      = section.querySelector('.film-wm-mask');
     if (!section || !video) return;
 
-    (async () => {
-      try {
-        const resp = await fetch('assets/ecu-to-maybach.mp4');
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        const total = parseInt(resp.headers.get('content-length') || '0', 10);
-        if (total > 0 && resp.body && resp.body.getReader) {
-          const reader = resp.body.getReader();
-          const chunks = [];
-          let received = 0;
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            chunks.push(value);
-            received += value.length;
-            if (pctEl) pctEl.textContent = Math.min(99, Math.round((received / total) * 100)) + '%';
-          }
-          video.src = URL.createObjectURL(new Blob(chunks, { type: 'video/mp4' }));
-        } else {
-          video.src = URL.createObjectURL(await resp.blob());
-        }
-        if (pctEl) pctEl.textContent = '100%';
-        video.load();
-      } catch (err) {
-        console.warn('film fetch failed, falling back to direct src:', err);
-        video.src = 'assets/ecu-to-maybach.mp4';
-        video.load();
-      }
-    })();
+    // Place the watermark mask over the real (letterboxed) video band. With object-fit:contain
+    // the painted frame is centred inside the pin, so we recompute its rect from the intrinsic
+    // video size whenever metadata loads or the viewport changes — keeps it aligned everywhere.
+    function positionMask() {
+      if (!wm || !video.videoWidth || !video.videoHeight) return;
+      const pin = video.parentElement;
+      const PW = pin.clientWidth, PH = pin.clientHeight;
+      const scale = Math.min(PW / video.videoWidth, PH / video.videoHeight);
+      const bandW = video.videoWidth * scale, bandH = video.videoHeight * scale;
+      const left = (PW - bandW) / 2, top = (PH - bandH) / 2;
+      const mw = Math.max(70, bandW * 0.26), mh = Math.max(40, bandH * 0.20);
+      wm.style.width  = mw + 'px';
+      wm.style.height = mh + 'px';
+      wm.style.left   = (left + bandW - mw) + 'px';
+      wm.style.top    = (top + bandH - mh) + 'px';
+    }
 
-    video.pause();
+    // Direct file URL keeps HTTP range requests alive — iOS Safari needs them to seek/scrub.
+    // (The previous build streamed the whole 3.6 MB clip into a blob: that downloads everything
+    //  up-front and makes seeking fail on iOS, so the film stayed frozen on the first frame.)
+    // GitHub Pages serves "Accept-Ranges: bytes", so the browser fetches only what it needs.
+    video.src = 'assets/ecu-to-maybach.mp4';
     video.removeAttribute('autoplay');
+    video.load();
+
+    // Loader %: reflect how much has buffered (the loader is hidden once metadata arrives).
+    video.addEventListener('progress', () => {
+      try {
+        if (pctEl && video.duration && video.buffered.length) {
+          const end = video.buffered.end(video.buffered.length - 1);
+          pctEl.textContent = Math.min(99, Math.round((end / video.duration) * 100)) + '%';
+        }
+      } catch (_) {}
+    });
+
+    // iOS will not paint frames for currentTime seeks until the element has been "unlocked"
+    // by a play() call. Prime it once — muted autoplay where allowed (desktop + modern iOS),
+    // with the first touch/click as a guaranteed fallback — then immediately pause.
+    let primed = false;
+    const prime = () => {
+      if (primed) return;
+      const p = video.play();
+      if (p && typeof p.then === 'function') {
+        p.then(() => { try { video.pause(); } catch (_) {} primed = true; }).catch(() => {});
+      } else {
+        try { video.pause(); } catch (_) {}
+        primed = true;
+      }
+    };
+    video.addEventListener('loadeddata', prime, { once: true });
+    ['touchstart', 'pointerdown', 'click'].forEach(ev =>
+      window.addEventListener(ev, prime, { once: true, passive: true }));
 
     let duration = 0;
     const onReady = () => {
@@ -3122,6 +3160,8 @@
         duration = video.duration;
         video.classList.add('ready');
         if (loader) { loader.classList.add('gone'); setTimeout(() => loader.remove(), 600); }
+        positionMask();
+        if (wm) wm.classList.add('ready');
         update(true);
       }
     };
@@ -3214,7 +3254,7 @@
       }
     };
     window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', () => update(true));
+    window.addEventListener('resize', () => { update(true); positionMask(); });
     update(false);
   })();
 
